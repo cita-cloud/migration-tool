@@ -480,7 +480,7 @@ where
 
     node_dirs.sort_by_key(|d| {
         let dir_name = d.file_name().unwrap().to_string_lossy();
-        let node_id: u64 = dir_name.strip_prefix(chain_name).unwrap().parse().unwrap();
+        let node_id: u64 = dir_name.strip_prefix(&format!("{}-", chain_name)).unwrap().parse().unwrap();
         node_id
     });
 
