@@ -10,3 +10,4 @@ serde = { version = "1", features = ["derive"] }
 anyhow = "1"
 rcgen = "0.8"
 fs_extra = "1.2"
+clap = "=3.0.0-beta.5"

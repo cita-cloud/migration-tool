@@ -38,7 +38,6 @@ fn cert(domain: &str, signer: &Certificate) -> (Certificate, CertAndKey) {
     params.key_pair.replace(keypair);
 
     let cert = Certificate::from_params(params).unwrap();
-    let cert_pem = cert.serialize_pem_with_signer(signer).unwrap();
     let cert_and_key = {
         let cert_pem = cert.serialize_pem_with_signer(signer).unwrap();
         let key_pem = cert.serialize_private_key_pem();
