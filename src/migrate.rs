@@ -141,21 +141,21 @@ mod new {
 
     #[derive(Serialize)]
     pub struct Config {
+        pub system_config: SystemConfig,
+        pub genesis_block: GenesisBlock,
+
         #[serde(rename = "controller")]
         pub controller: ControllerConfig,
         #[serde(rename = "consensus_raft")]
         pub consensus: ConsensusRaftConfig,
-        #[serde(rename = "network_tls")]
-        pub network: NetworkTlsConfig,
-        #[serde(rename = "kms_sm")]
-        pub kms: KmsSmConfig,
         #[serde(rename = "storage_rocksdb")]
         pub storage: StorageRocksDbConfig,
         #[serde(rename = "executor_evm")]
         pub executor: ExecutorEvmConfig,
-
-        pub genesis_block: GenesisBlock,
-        pub system_config: SystemConfig,
+        #[serde(rename = "kms_sm")]
+        pub kms: KmsSmConfig,
+        #[serde(rename = "network_tls")]
+        pub network: NetworkTlsConfig,
 
         // Helper data, will be filled later
         #[serde(skip)]
@@ -359,15 +359,15 @@ impl NodeConfigMigrate {
         };
 
         new::Config {
+            system_config,
+            genesis_block,
+
             controller,
             consensus,
             executor,
             storage,
             kms,
             network,
-
-            system_config,
-            genesis_block,
 
             network_host: None,
             network_port: None,
