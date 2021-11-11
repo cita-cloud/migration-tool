@@ -11,16 +11,12 @@ use fs_extra::dir::CopyOptions;
 
 use anyhow::ensure;
 use anyhow::Result;
-use old::Genesis;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-
-use new::NetworkTlsPeerConfig;
-use new::DEFAULT_PACKAGE_LIMIT;
+use serde::de::DeserializeOwned;
 
 use crate::cert::{generate_certs, CertAndKey};
 
 mod old {
-    use serde::{Deserialize, Serialize};
+    use serde::Deserialize;
 
     #[derive(Deserialize)]
     pub struct ConsensusConfig {
@@ -34,7 +30,6 @@ mod old {
         pub storage_port: u16,
         pub kms_port: u16,
         pub executor_port: u16,
-        pub block_delay_number: u64,
     }
 
     #[derive(Deserialize)]
@@ -66,7 +61,7 @@ mod old {
 }
 
 mod new {
-    use serde::{Deserialize, Serialize};
+    use serde::Serialize;
 
     pub const DEFAULT_BLOCK_LIMIT: u64 = 100;
     pub const DEFAULT_PACKAGE_LIMIT: u64 = 30000;
@@ -130,6 +125,7 @@ mod new {
     #[derive(Serialize)]
     pub struct KmsSmConfig {
         pub kms_port: u16,
+        pub db_key: String,
     }
 
     #[derive(Serialize)]
@@ -225,7 +221,6 @@ struct NodeConfigMigrate {
 
     // controller
     node_addr: String,
-    block_delay_number: u64,
     genesis_block: old::Genesis,
     system_config: old::InitSysConfig,
 
@@ -250,7 +245,6 @@ impl NodeConfigMigrate {
             network_port,
             executor_port,
             kms_port,
-            block_delay_number,
         } = extract_toml(&data_dir, "controller-config.toml")?;
 
         let old::ConsensusConfig { controller_port } =
@@ -275,7 +269,6 @@ impl NodeConfigMigrate {
 
             // controller
             node_addr,
-            block_delay_number,
             genesis_block,
             system_config,
 
@@ -327,6 +320,7 @@ impl NodeConfigMigrate {
 
         let kms = new::KmsSmConfig {
             kms_port: self.kms_port,
+            db_key: self.kms_password.clone(),
         };
 
         let storage = new::StorageRocksDbConfig {
@@ -454,7 +448,7 @@ fn fill_network_tls_info(node_configs: &mut [new::Config]) -> CertAndKey {
     ca_cert_and_key
 }
 
-fn migrate<P, Q>(chain_data_dir: P, chain_name: &str, new_chain_data_dir: Q) -> Result<()>
+pub fn migrate<P, Q>(chain_data_dir: P, new_chain_data_dir: Q, chain_name: &str) -> Result<()>
 where
     P: AsRef<Path>,
     Q: AsRef<Path>,
@@ -511,13 +505,13 @@ where
         let genesis_block = first_node.genesis_block.clone();
 
         let network_config = {
-            let itself = NetworkTlsPeerConfig {
+            let itself = new::NetworkTlsPeerConfig {
                 domain: Some(first_node.controller.node_address.clone()),
                 // Network info has been filled.
                 host: first_node.network_host.clone().unwrap(),
                 port: first_node.network_port.unwrap(),
             };
-            let peers: Vec<NetworkTlsPeerConfig> = std::iter::once(itself)
+            let peers: Vec<new::NetworkTlsPeerConfig> = std::iter::once(itself)
                 .chain(first_node.network.peers.clone())
                 .collect();
 
@@ -586,9 +580,17 @@ where
     migrate_log4rs_and_kms_db(sample_node, new_chain_metadata_dir);
 
     // construct new node data
-    for (dir, node_config) in node_dirs.iter().zip(node_configs) {
-        let old_node_dir = chain_data_dir.join(&dir);
-        let new_node_dir = new_chain_data_dir.join(&dir);
+    for (old, node_config) in node_dirs.iter().zip(node_configs) {
+        let old_node_dir = chain_data_dir.join(&old);
+        let new_node_dir = new_chain_data_dir.join(format!(
+            "{}-{}",
+            chain_name,
+            node_config
+                .controller
+                .node_address
+                .strip_prefix("0x")
+                .unwrap()
+        ));
 
         let mut node_config_toml = File::create(new_node_dir.join("config.toml")).unwrap();
         let node_config_content = toml::to_string_pretty(&node_config).unwrap();
