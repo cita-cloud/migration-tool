@@ -13,6 +13,7 @@ fn main() {
                 .about("The old chain data")
                 .short('d')
                 .long("chain-dir")
+                .takes_value(true)
                 .required(true)
                 .validator(str::parse::<PathBuf>),
         )
@@ -21,6 +22,7 @@ fn main() {
                 .about("The output dir")
                 .short('o')
                 .long("out-dir")
+                .takes_value(true)
                 .required(true)
                 .validator(str::parse::<PathBuf>),
         )
@@ -29,6 +31,7 @@ fn main() {
                 .about("Name of the chain")
                 .short('n')
                 .long("chain-name")
+                .takes_value(true)
                 .required(true)
                 .validator(str::parse::<PathBuf>),
         );
