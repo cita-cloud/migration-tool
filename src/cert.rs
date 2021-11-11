@@ -5,12 +5,10 @@ use rcgen::IsCa;
 use rcgen::KeyPair;
 use rcgen::PKCS_ECDSA_P256_SHA256;
 
-
 pub struct CertAndKey {
     pub cert: String,
     pub key: String,
 }
-
 
 fn ca_cert() -> (Certificate, CertAndKey) {
     let mut params = CertificateParams::new(vec![]);
@@ -25,7 +23,7 @@ fn ca_cert() -> (Certificate, CertAndKey) {
         let key_pem = cert.serialize_private_key_pem();
         CertAndKey {
             cert: cert_pem,
-            key: key_pem
+            key: key_pem,
         }
     };
 
@@ -46,17 +44,18 @@ fn cert(domain: &str, signer: &Certificate) -> (Certificate, CertAndKey) {
         let key_pem = cert.serialize_private_key_pem();
         CertAndKey {
             cert: cert_pem,
-            key: key_pem
+            key: key_pem,
         }
     };
     (cert, cert_and_key)
 }
 
-
 pub fn generate_certs(domains: &[String]) -> (CertAndKey, Vec<CertAndKey>) {
     let (ca_cert, ca_cert_and_key) = ca_cert();
-    let peer_cert_and_keys = domains.iter().map(|domain| cert(domain, &ca_cert).1).collect();
+    let peer_cert_and_keys = domains
+        .iter()
+        .map(|domain| cert(domain, &ca_cert).1)
+        .collect();
 
     (ca_cert_and_key, peer_cert_and_keys)
 }
-

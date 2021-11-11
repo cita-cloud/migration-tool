@@ -1,30 +1,26 @@
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::fs;
+use std::fs::File;
+use std::io::prelude::*;
 use std::path::Path;
 use std::path::PathBuf;
-use std::fs::File;
-use std::fs;
-use std::io::prelude::*;
-use std::collections::HashSet;
-use std::collections::HashMap;
 
 use fs_extra::dir::copy as copy_dir;
 use fs_extra::dir::CopyOptions;
 
-use anyhow::Result;
 use anyhow::ensure;
+use anyhow::Result;
 use old::Genesis;
-use serde::{
-    Deserialize, Serialize,
-    de::DeserializeOwned,
-};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use new::DEFAULT_PACKAGE_LIMIT;
 use new::NetworkTlsPeerConfig;
+use new::DEFAULT_PACKAGE_LIMIT;
 
-use crate::cert::{ CertAndKey, generate_certs };
-
+use crate::cert::{generate_certs, CertAndKey};
 
 mod old {
-    use serde::{ Deserialize, Serialize };
+    use serde::{Deserialize, Serialize};
 
     #[derive(Deserialize)]
     pub struct ConsensusConfig {
@@ -69,13 +65,11 @@ mod old {
     }
 }
 
-
 mod new {
-    use serde::{ Deserialize, Serialize };
+    use serde::{Deserialize, Serialize};
 
     pub const DEFAULT_BLOCK_LIMIT: u64 = 100;
     pub const DEFAULT_PACKAGE_LIMIT: u64 = 30000;
-
 
     #[derive(Serialize)]
     pub struct ControllerConfig {
@@ -148,7 +142,6 @@ mod new {
     pub struct ExecutorEvmConfig {
         pub executor_port: u16,
     }
-
 
     #[derive(Serialize)]
     pub struct Config {
@@ -251,7 +244,7 @@ impl NodeConfigMigrate {
     }
 
     fn extract_from(data_dir: impl AsRef<Path>) -> Result<Self> {
-        let old::ControllerConfig{
+        let old::ControllerConfig {
             consensus_port,
             storage_port,
             network_port,
@@ -260,7 +253,8 @@ impl NodeConfigMigrate {
             block_delay_number,
         } = extract_toml(&data_dir, "controller-config.toml")?;
 
-        let old::ConsensusConfig{ controller_port } = extract_toml(&data_dir, "consensus-config.toml")?;
+        let old::ConsensusConfig { controller_port } =
+            extract_toml(&data_dir, "consensus-config.toml")?;
 
         let network_config: old::NetworkConfig = extract_toml(&data_dir, "network-config.toml")?;
         let node_addr = extract_text(&data_dir, "node_address")?;
@@ -345,17 +339,21 @@ impl NodeConfigMigrate {
         };
 
         let network = {
-            let peers = self.network_config.peers.iter().map(|p|{
-                new::NetworkTlsPeerConfig{
-                    // will be filled latter
-                    domain: None,
-                    host: p.ip.clone(),
-                    port: p.port,
-                }
-            })
-            .collect();
+            let peers = self
+                .network_config
+                .peers
+                .iter()
+                .map(|p| {
+                    new::NetworkTlsPeerConfig {
+                        // will be filled latter
+                        domain: None,
+                        host: p.ip.clone(),
+                        port: p.port,
+                    }
+                })
+                .collect();
 
-            new::NetworkTlsConfig{
+            new::NetworkTlsConfig {
                 // will be filled latter
                 ca_cert: None,
                 cert: None,
@@ -381,7 +379,6 @@ impl NodeConfigMigrate {
             network_port: None,
         }
     }
-
 }
 
 fn extract_toml<T: DeserializeOwned>(data_dir: impl AsRef<Path>, file_name: &str) -> Result<T> {
@@ -390,15 +387,13 @@ fn extract_toml<T: DeserializeOwned>(data_dir: impl AsRef<Path>, file_name: &str
     Ok(res)
 }
 
-fn extract_text(data_dir: impl AsRef<Path>, file_name: &str) -> Result<String> 
-{
+fn extract_text(data_dir: impl AsRef<Path>, file_name: &str) -> Result<String> {
     let path = data_dir.as_ref().join(file_name);
     let mut f = File::open(path)?;
     let mut buf = String::new();
     f.read_to_string(&mut buf)?;
     Ok(buf)
 }
-
 
 // Return CA's cert and key
 fn fill_network_tls_info(node_configs: &mut [new::Config]) -> CertAndKey {
@@ -416,28 +411,42 @@ fn fill_network_tls_info(node_configs: &mut [new::Config]) -> CertAndKey {
             full_peer_set
         };
 
-        node_configs.iter_mut().map(|c|{
-            let peer_set: HashSet<(String, u16)> = c.network.peers.iter().map(|p| (p.host.clone(), p.port)).collect();
-            let (host, port) = full_peer_set.difference(&peer_set).next().cloned().unwrap();
-            c.network_host.replace(host.clone());
-            c.network_port.replace(port);
+        node_configs
+            .iter_mut()
+            .map(|c| {
+                let peer_set: HashSet<(String, u16)> = c
+                    .network
+                    .peers
+                    .iter()
+                    .map(|p| (p.host.clone(), p.port))
+                    .collect();
+                let (host, port) = full_peer_set.difference(&peer_set).next().cloned().unwrap();
+                c.network_host.replace(host.clone());
+                c.network_port.replace(port);
 
-            ((host, port), c.controller.node_address.clone())
-        })
-        .collect()
+                ((host, port), c.controller.node_address.clone())
+            })
+            .collect()
     };
 
-    let node_addrs: Vec<String> = node_configs.iter().map(|c| c.controller.node_address.clone()).collect();
+    let node_addrs: Vec<String> = node_configs
+        .iter()
+        .map(|c| c.controller.node_address.clone())
+        .collect();
     let (ca_cert_and_key, peer_cert_and_keys) = generate_certs(&node_addrs);
 
-    node_configs.iter_mut()
+    node_configs
+        .iter_mut()
         .zip(peer_cert_and_keys)
         .for_each(|(c, cert_and_key)| {
             c.network.ca_cert.replace(ca_cert_and_key.cert.clone());
-            c.network.cert.replace(cert_and_key.cert.clone());
+            c.network.cert.replace(cert_and_key.cert);
 
             for p in c.network.peers.iter_mut() {
-                let node_addr = host_port_to_addr.get(&(p.host.clone(), p.port)).cloned().unwrap();
+                let node_addr = host_port_to_addr
+                    .get(&(p.host.clone(), p.port))
+                    .cloned()
+                    .unwrap();
                 p.domain.replace(node_addr);
             }
         });
@@ -445,8 +454,7 @@ fn fill_network_tls_info(node_configs: &mut [new::Config]) -> CertAndKey {
     ca_cert_and_key
 }
 
-
-fn migrate<P, Q>(chain_data_dir: P, chain_name: &str, new_chain_data_dir: Q) -> Result<()> 
+fn migrate<P, Q>(chain_data_dir: P, chain_name: &str, new_chain_data_dir: Q) -> Result<()>
 where
     P: AsRef<Path>,
     Q: AsRef<Path>,
@@ -460,33 +468,43 @@ where
     ensure!(chain_data_dir.is_dir(), "chain data folder not found");
     ensure!(chain_metadata_dir.is_dir(), "metadata folder not found");
 
-    let mut node_dirs: Vec<PathBuf> = fs::read_dir(chain_data_dir).unwrap()
+    let mut node_dirs: Vec<PathBuf> = fs::read_dir(chain_data_dir)
+        .unwrap()
         .filter_map(|ent| {
             let ent = ent.unwrap();
             let dir_name = ent.file_name().into_string().unwrap();
-            if ent.file_type().unwrap().is_dir() && dir_name.starts_with(chain_name) && dir_name != chain_name {
+            if ent.file_type().unwrap().is_dir()
+                && dir_name.starts_with(chain_name)
+                && dir_name != chain_name
+            {
                 Some(ent.path())
             } else {
                 None
             }
         })
         .collect();
-    
+
     node_dirs.sort_by_key(|d| {
         let dir_name = d.file_name().unwrap().to_string_lossy();
         let node_id: u64 = dir_name.strip_prefix(chain_name).unwrap().parse().unwrap();
         node_id
     });
 
-    let mut node_configs: Vec<new::Config> = node_dirs.iter().map(|d| {
-        NodeConfigMigrate::from_old(d.file_name().unwrap()).unwrap()
-    })
-    .collect();
+    let mut node_configs: Vec<new::Config> = node_dirs
+        .iter()
+        .map(|d| NodeConfigMigrate::from_old(d.file_name().unwrap()).unwrap())
+        .collect();
 
-    let CertAndKey { cert: ca_cert_pem, key: ca_key_pem } = fill_network_tls_info(&mut node_configs);
+    let CertAndKey {
+        cert: ca_cert_pem,
+        key: ca_key_pem,
+    } = fill_network_tls_info(&mut node_configs);
 
     let meta_config = {
-        let node_addrs: Vec<String> = node_configs.iter().map(|c| c.controller.node_address.clone()).collect();
+        let node_addrs: Vec<String> = node_configs
+            .iter()
+            .map(|c| c.controller.node_address.clone())
+            .collect();
         // Sample node
         let first_node = node_configs.first().unwrap();
         let system_config = first_node.system_config.clone();
@@ -497,17 +515,26 @@ where
                 domain: Some(first_node.controller.node_address.clone()),
                 // Network info has been filled.
                 host: first_node.network_host.clone().unwrap(),
-                port: first_node.network_port.clone().unwrap(),
+                port: first_node.network_port.unwrap(),
             };
-            let peers: Vec<NetworkTlsPeerConfig> = std::iter::once(itself).chain(first_node.network.peers.clone()).collect();
+            let peers: Vec<NetworkTlsPeerConfig> = std::iter::once(itself)
+                .chain(first_node.network.peers.clone())
+                .collect();
 
-            new::MetaNetworkConfig{ peers }
+            new::MetaNetworkConfig { peers }
         };
 
         let current_config = {
-            let (ips, p2p_ports) = network_config.peers.iter().map(|p| (p.host.clone(), p.port)).unzip();
+            let (ips, p2p_ports) = network_config
+                .peers
+                .iter()
+                .map(|p| (p.host.clone(), p.port))
+                .unzip();
 
-            let rpc_ports = node_configs.iter().map(|c| c.controller.controller_port).collect();
+            let rpc_ports = node_configs
+                .iter()
+                .map(|c| c.controller.controller_port)
+                .collect();
 
             new::MetaCurrentConfig {
                 addresses: node_addrs,
@@ -528,11 +555,14 @@ where
             let admin_address = first_node.system_config.admin.clone();
             let key_id = {
                 let admin_key_dir = chain_metadata_dir.join(&admin_address);
-                extract_text(admin_key_dir, "key_id").unwrap().parse().unwrap()
+                extract_text(admin_key_dir, "key_id")
+                    .unwrap()
+                    .parse()
+                    .unwrap()
             };
             new::MetaAdminConfig {
                 admin_address,
-                key_id, 
+                key_id,
             }
         };
 
@@ -548,7 +578,9 @@ where
     // construct new meta data
     let mut meta_config_toml = File::create(new_chain_metadata_dir.join("config.toml")).unwrap();
     let meta_config_content = toml::to_string_pretty(&meta_config).unwrap();
-    meta_config_toml.write_all(meta_config_content.as_bytes()).unwrap();
+    meta_config_toml
+        .write_all(meta_config_content.as_bytes())
+        .unwrap();
 
     let sample_node = chain_data_dir.join(node_dirs.first().unwrap());
     migrate_log4rs_and_kms_db(sample_node, new_chain_metadata_dir);
@@ -560,7 +592,9 @@ where
 
         let mut node_config_toml = File::create(new_node_dir.join("config.toml")).unwrap();
         let node_config_content = toml::to_string_pretty(&node_config).unwrap();
-        node_config_toml.write_all(node_config_content.as_bytes()).unwrap();
+        node_config_toml
+            .write_all(node_config_content.as_bytes())
+            .unwrap();
 
         migrate_log4rs_and_kms_db(&old_node_dir, &new_node_dir);
         migrate_chain_data_and_storage_data_and_logs(&old_node_dir, &new_node_dir);
@@ -568,7 +602,6 @@ where
 
     Ok(())
 }
-
 
 fn migrate_log4rs_and_kms_db<P, Q>(old_dir: P, new_dir: Q)
 where
@@ -593,7 +626,6 @@ where
     }
 }
 
-
 fn migrate_chain_data_and_storage_data_and_logs<P, Q>(old_dir: P, new_dir: Q)
 where
     P: AsRef<Path>,
@@ -602,13 +634,9 @@ where
     let old_dir = old_dir.as_ref();
     let new_dir = new_dir.as_ref();
 
-    let dirs = [
-        "chain_data",
-        "data",
-        "logs",
-    ];
+    let dirs = ["chain_data", "data", "logs"];
 
-    let opts = CopyOptions{
+    let opts = CopyOptions {
         skip_exist: true,
         copy_inside: true,
         ..Default::default()

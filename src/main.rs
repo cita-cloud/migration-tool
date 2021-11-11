@@ -1,6 +1,4 @@
 mod cert;
 mod migrate;
 
-fn main() {
-
-}
+fn main() {}
