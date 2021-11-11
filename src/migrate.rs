@@ -458,6 +458,8 @@ where
 
     let new_chain_data_dir = new_chain_data_dir.as_ref();
     let new_chain_metadata_dir = new_chain_data_dir.join(chain_name);
+    fs::create_dir_all(&new_chain_data_dir).unwrap();
+    fs::create_dir_all(&new_chain_metadata_dir).unwrap();
 
     ensure!(chain_data_dir.is_dir(), "chain data folder not found");
     ensure!(chain_metadata_dir.is_dir(), "metadata folder not found");
@@ -480,13 +482,17 @@ where
 
     node_dirs.sort_by_key(|d| {
         let dir_name = d.file_name().unwrap().to_string_lossy();
-        let node_id: u64 = dir_name.strip_prefix(&format!("{}-", chain_name)).unwrap().parse().unwrap();
+        let node_id: u64 = dir_name
+            .strip_prefix(&format!("{}-", chain_name))
+            .unwrap()
+            .parse()
+            .unwrap();
         node_id
     });
 
     let mut node_configs: Vec<new::Config> = node_dirs
         .iter()
-        .map(|d| NodeConfigMigrate::from_old(d.file_name().unwrap()).unwrap())
+        .map(|d| NodeConfigMigrate::from_old(d).unwrap())
         .collect();
 
     let CertAndKey {
@@ -576,12 +582,11 @@ where
         .write_all(meta_config_content.as_bytes())
         .unwrap();
 
-    let sample_node = chain_data_dir.join(node_dirs.first().unwrap());
+    let sample_node = node_dirs.first().unwrap();
     migrate_log4rs_and_kms_db(sample_node, new_chain_metadata_dir);
 
     // construct new node data
-    for (old, node_config) in node_dirs.iter().zip(node_configs) {
-        let old_node_dir = chain_data_dir.join(&old);
+    for (old_node_dir, node_config) in node_dirs.iter().zip(node_configs) {
         let new_node_dir = new_chain_data_dir.join(format!(
             "{}-{}",
             chain_name,
@@ -591,6 +596,7 @@ where
                 .strip_prefix("0x")
                 .unwrap()
         ));
+        fs::create_dir_all(&new_node_dir).unwrap();
 
         let mut node_config_toml = File::create(new_node_dir.join("config.toml")).unwrap();
         let node_config_content = toml::to_string_pretty(&node_config).unwrap();
