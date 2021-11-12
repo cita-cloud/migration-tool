@@ -71,6 +71,11 @@ old-chain
         (omitted)
 ```
 
+Do the migration.
+```
+$ migration-tool migrate -d old-chain -o new-chain -n test-chain
+```
+
 The output chain data structure:
 ```
 $ tree new-chain
@@ -114,10 +119,11 @@ A: Go check the old and new chain config.
 
 Q: Where is the `consensus-log4rs.yaml`?
 
-A: This tool only upgrate to `consensus_raft` which doesn't use `log4rs`.
+A: This tool only upgrates to `consensus_raft` which doesn't use `log4rs`.
 
 </br>
 
 Q: Where is my `consensus_raft` data?
 
-A: Discarded. The new `consensus_raft` has a incompatible wal data. This migration will reset the raft state and use controller's block hight. It should work fine.
+A: Discarded. The new `consensus_raft` has a incompatible wal data. This migration will reset the raft state
+and `consensus_raft` will use `controller`'s block hight. It should work fine.
