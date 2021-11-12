@@ -10,6 +10,7 @@ use fs_extra::dir::copy as copy_dir;
 use fs_extra::dir::CopyOptions;
 
 use anyhow::ensure;
+use anyhow::Context;
 use anyhow::Result;
 use serde::de::DeserializeOwned;
 
@@ -234,7 +235,8 @@ struct NodeConfigMigrate {
 
 impl NodeConfigMigrate {
     pub fn from_old(data_dir: impl AsRef<Path>) -> Result<new::Config> {
-        let old = Self::extract_from(data_dir)?;
+        let old =
+            Self::extract_from(data_dir).context("cannot extract info from old node config")?;
         Ok(old.generate_new())
     }
 
@@ -376,21 +378,29 @@ impl NodeConfigMigrate {
 }
 
 fn extract_toml<T: DeserializeOwned>(data_dir: impl AsRef<Path>, file_name: &str) -> Result<T> {
-    let s = extract_text(data_dir, file_name)?;
-    let res: T = toml::from_str(&s)?;
+    let s = extract_text(data_dir, file_name).context("cannot load toml file")?;
+    let res: T = toml::from_str(&s)
+        .with_context(|| format!("invalid toml for the `{}` type", std::any::type_name::<T>()))?;
     Ok(res)
 }
 
 fn extract_text(data_dir: impl AsRef<Path>, file_name: &str) -> Result<String> {
     let path = data_dir.as_ref().join(file_name);
-    let mut f = File::open(path)?;
+    let mut f = File::open(&path).with_context(|| {
+        format!(
+            "cannot open file `{}` in `{}`",
+            file_name,
+            data_dir.as_ref().to_string_lossy()
+        )
+    })?;
     let mut buf = String::new();
-    f.read_to_string(&mut buf)?;
+    f.read_to_string(&mut buf)
+        .with_context(|| format!("cannot read data from {}", path.to_string_lossy()))?;
     Ok(buf)
 }
 
 // Return CA's cert and key
-fn fill_network_tls_info(node_configs: &mut [new::Config]) -> CertAndKey {
+fn fill_network_tls_info(node_configs: &mut [new::Config]) -> Result<CertAndKey> {
     // Construct (host, port) -> node_addr map.
     let host_port_to_addr: HashMap<(String, u16), String> = {
         let full_peer_set = {
@@ -405,6 +415,7 @@ fn fill_network_tls_info(node_configs: &mut [new::Config]) -> CertAndKey {
             full_peer_set
         };
 
+        // Find nodes' host and port
         node_configs
             .iter_mut()
             .map(|c| {
@@ -414,13 +425,19 @@ fn fill_network_tls_info(node_configs: &mut [new::Config]) -> CertAndKey {
                     .iter()
                     .map(|p| (p.host.clone(), p.port))
                     .collect();
-                let (host, port) = full_peer_set.difference(&peer_set).next().cloned().unwrap();
+                let (host, port) = full_peer_set.difference(&peer_set).next().cloned()
+                    .context(
+                        "Cannot find out node's self host and port. \
+                        The assumption that node's peers info contains all (and only) other peers has been violated"
+                    )?;
                 c.network_host.replace(host.clone());
                 c.network_port.replace(port);
 
-                ((host, port), c.controller.node_address.clone())
+                Ok(
+                    ((host, port), c.controller.node_address.clone())
+                )
             })
-            .collect()
+            .collect::<Result<_>>()?
     };
 
     let node_addrs: Vec<String> = node_configs
@@ -432,7 +449,7 @@ fn fill_network_tls_info(node_configs: &mut [new::Config]) -> CertAndKey {
     node_configs
         .iter_mut()
         .zip(peer_cert_and_keys)
-        .for_each(|(c, cert_and_key)| {
+        .try_for_each(|(c, cert_and_key)| {
             c.network.ca_cert.replace(ca_cert_and_key.cert.clone());
             c.network.cert.replace(cert_and_key.cert);
 
@@ -440,12 +457,18 @@ fn fill_network_tls_info(node_configs: &mut [new::Config]) -> CertAndKey {
                 let node_addr = host_port_to_addr
                     .get(&(p.host.clone(), p.port))
                     .cloned()
-                    .unwrap();
+                    .with_context(|| {
+                        format!(
+                            "cannot find node address for `{}:{}`. go check network config",
+                            &p.host, p.port
+                        )
+                    })?;
                 p.domain.replace(node_addr);
             }
-        });
+            Ok::<(), anyhow::Error>(())
+        })?;
 
-    ca_cert_and_key
+    Ok(ca_cert_and_key)
 }
 
 pub fn migrate<P, Q>(chain_data_dir: P, new_chain_data_dir: Q, chain_name: &str) -> Result<()>
@@ -455,24 +478,22 @@ where
 {
     let chain_data_dir = chain_data_dir.as_ref();
     let chain_metadata_dir = chain_data_dir.join(chain_name);
+    ensure!(chain_data_dir.is_dir(), "chain data folder not found");
+    ensure!(chain_metadata_dir.is_dir(), "metadata folder not found");
 
     let new_chain_data_dir = new_chain_data_dir.as_ref();
     let new_chain_metadata_dir = new_chain_data_dir.join(chain_name);
     fs::create_dir_all(&new_chain_data_dir).unwrap();
     fs::create_dir_all(&new_chain_metadata_dir).unwrap();
 
-    ensure!(chain_data_dir.is_dir(), "chain data folder not found");
-    ensure!(chain_metadata_dir.is_dir(), "metadata folder not found");
-
+    // Load node dirs.
     let mut node_dirs: Vec<PathBuf> = fs::read_dir(chain_data_dir)
         .unwrap()
         .filter_map(|ent| {
             let ent = ent.unwrap();
             let dir_name = ent.file_name().into_string().unwrap();
-            if ent.file_type().unwrap().is_dir()
-                && dir_name.starts_with(chain_name)
-                && dir_name != chain_name
-            {
+            let prefix = format!("{}-", chain_name);
+            if ent.file_type().unwrap().is_dir() && dir_name.starts_with(&prefix) {
                 Some(ent.path())
             } else {
                 None
@@ -480,6 +501,7 @@ where
         })
         .collect();
 
+    // Sort node dirs according to their node_id.
     node_dirs.sort_by_key(|d| {
         let dir_name = d.file_name().unwrap().to_string_lossy();
         let node_id: u64 = dir_name
@@ -490,23 +512,32 @@ where
         node_id
     });
 
-    let mut node_configs: Vec<new::Config> = node_dirs
+    // Construct new node config from the old one. (without network_tls info)
+    let mut node_configs = node_dirs
         .iter()
-        .map(|d| NodeConfigMigrate::from_old(d).unwrap())
-        .collect();
+        .map(|d| {
+            NodeConfigMigrate::from_old(d)
+                .with_context(|| format!("cannot migrate node config in `{}`", d.to_string_lossy()))
+        })
+        .collect::<Result<Vec<new::Config>>>()?;
 
+    // Fill the network_tls info.
     let CertAndKey {
         cert: ca_cert_pem,
         key: ca_key_pem,
-    } = fill_network_tls_info(&mut node_configs);
+    } = fill_network_tls_info(&mut node_configs)
+        .context("cannot fill network_tls info for chain config")?;
 
+    // Construct $NEW_CHAIN_DATA_DIR/$CHAIN_NAME/config.toml
     let meta_config = {
         let node_addrs: Vec<String> = node_configs
             .iter()
             .map(|c| c.controller.node_address.clone())
             .collect();
         // Sample node
-        let first_node = node_configs.first().unwrap();
+        let first_node = node_configs
+            .first()
+            .context("Empty chain. No node config found")?;
         let system_config = first_node.system_config.clone();
         let genesis_block = first_node.genesis_block.clone();
 
@@ -556,9 +587,9 @@ where
             let key_id = {
                 let admin_key_dir = chain_metadata_dir.join(&admin_address);
                 extract_text(admin_key_dir, "key_id")
-                    .unwrap()
+                    .context("cannot load admin `key_id`")?
                     .parse()
-                    .unwrap()
+                    .context("invalid admin `key_id`")?
             };
             new::MetaAdminConfig {
                 admin_address,
@@ -576,14 +607,16 @@ where
     };
 
     // construct new meta data
-    let mut meta_config_toml = File::create(new_chain_metadata_dir.join("config.toml")).unwrap();
+    let mut meta_config_toml = File::create(new_chain_metadata_dir.join("config.toml"))
+        .context("cannot create meta `config.toml`")?;
     let meta_config_content = toml::to_string_pretty(&meta_config).unwrap();
     meta_config_toml
         .write_all(meta_config_content.as_bytes())
-        .unwrap();
+        .context("cannot write meta `config.toml`")?;
 
     let sample_node = node_dirs.first().unwrap();
-    migrate_log4rs_and_kms_db(sample_node, new_chain_metadata_dir);
+    migrate_log4rs_and_kms_db(sample_node, new_chain_metadata_dir)
+        .context("cannot copy log4rs and kms_db config to meta config dir")?;
 
     // construct new node data
     for (old_node_dir, node_config) in node_dirs.iter().zip(node_configs) {
@@ -594,24 +627,42 @@ where
                 .controller
                 .node_address
                 .strip_prefix("0x")
-                .unwrap()
+                .context("invalid node address, must be a hex string with `0x` prefix")?
         ));
-        fs::create_dir_all(&new_node_dir).unwrap();
+        fs::create_dir_all(&new_node_dir).with_context(|| {
+            format!(
+                "cannot create new node dir `{}`",
+                new_node_dir.to_string_lossy()
+            )
+        })?;
 
-        let mut node_config_toml = File::create(new_node_dir.join("config.toml")).unwrap();
+        let mut node_config_toml = File::create(new_node_dir.join("config.toml"))
+            .context("cannot create node's `config.toml`")?;
         let node_config_content = toml::to_string_pretty(&node_config).unwrap();
         node_config_toml
             .write_all(node_config_content.as_bytes())
-            .unwrap();
+            .context("cannot write node's `config.toml`")?;
 
-        migrate_log4rs_and_kms_db(&old_node_dir, &new_node_dir);
-        migrate_chain_data_and_storage_data_and_logs(&old_node_dir, &new_node_dir);
+        migrate_log4rs_and_kms_db(&old_node_dir, &new_node_dir).with_context(|| {
+            format!(
+                "cannot migrate log4rs yamls and kms db for `{}`",
+                old_node_dir.to_string_lossy()
+            )
+        })?;
+        migrate_chain_data_and_storage_data_and_logs(&old_node_dir, &new_node_dir).with_context(
+            || {
+                format!(
+                    "cannot migrate {{chain data, storage data, logs}} for `{}`",
+                    old_node_dir.to_string_lossy()
+                )
+            },
+        )?;
     }
 
     Ok(())
 }
 
-fn migrate_log4rs_and_kms_db<P, Q>(old_dir: P, new_dir: Q)
+fn migrate_log4rs_and_kms_db<P, Q>(old_dir: P, new_dir: Q) -> Result<()>
 where
     P: AsRef<Path>,
     Q: AsRef<Path>,
@@ -630,11 +681,18 @@ where
     for f in files {
         let from = old_dir.join(f);
         let to = new_dir.join(f);
-        fs::copy(from, to).unwrap();
+        fs::copy(&from, &to).with_context(|| {
+            format!(
+                "cannot copy file from `{}` to `{}`",
+                from.to_string_lossy(),
+                to.to_string_lossy()
+            )
+        })?;
     }
+    Ok(())
 }
 
-fn migrate_chain_data_and_storage_data_and_logs<P, Q>(old_dir: P, new_dir: Q)
+fn migrate_chain_data_and_storage_data_and_logs<P, Q>(old_dir: P, new_dir: Q) -> Result<()>
 where
     P: AsRef<Path>,
     Q: AsRef<Path>,
@@ -652,6 +710,13 @@ where
     for d in dirs {
         let from = old_dir.join(d);
         let to = new_dir.join(d);
-        copy_dir(from, to, &opts).unwrap();
+        copy_dir(&from, &to, &opts).with_context(|| {
+            format!(
+                "cannot copy dir from `{}` to `{}`",
+                from.to_string_lossy(),
+                to.to_string_lossy()
+            )
+        })?;
     }
+    Ok(())
 }

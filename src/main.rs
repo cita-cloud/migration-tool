@@ -1,16 +1,20 @@
 mod cert;
 mod migrate;
 
-use clap::App;
-use clap::Arg;
 use std::path::PathBuf;
 
-fn main() {
+use clap::App;
+use clap::Arg;
+
+use anyhow::Context;
+use anyhow::Result;
+
+fn main() -> Result<()> {
     let migrate_cmd = App::new("migrate")
         .about("Migrate the chain data")
         .arg(
             Arg::new("chain-dir")
-                .about("The old chain data")
+                .about("The old chain dir")
                 .short('d')
                 .long("chain-dir")
                 .takes_value(true)
@@ -19,7 +23,7 @@ fn main() {
         )
         .arg(
             Arg::new("out-dir")
-                .about("The output dir")
+                .about("The output dir for the upgraded chain")
                 .short('o')
                 .long("out-dir")
                 .takes_value(true)
@@ -47,7 +51,7 @@ fn main() {
             let out_dir = m.value_of("out-dir").unwrap();
             let chain_name = m.value_of("chain-name").unwrap();
 
-            migrate::migrate(chain_dir, out_dir, chain_name).unwrap();
+            migrate::migrate(chain_dir, out_dir, chain_name).context("cannot migrate chain")?;
         }
         None => {
             println!("no subcommand provided");
@@ -56,4 +60,6 @@ fn main() {
             unreachable!()
         }
     }
+
+    Ok(())
 }
